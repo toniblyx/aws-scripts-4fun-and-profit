@@ -25,3 +25,10 @@ for service in $LIST_OF_SERVICES; do
       fi
     done
 done
+
+
+# Another method probably better than this one is the one suggested by Scott Piper, getting actions from botocore
+# https://github.com/duo-labs/cloudtracker#aws_actionstxt
+#
+# git clone --depth 1 -b master https://github.com/boto/botocore.git
+# find botocore/botocore/data -name *.json | xargs cat | jq -r 'select(.operations != null) as $parent | .operations | keys | .[] | $parent.metadata.endpointPrefix +":"+.' | sort | uniq > aws_actions.txt
