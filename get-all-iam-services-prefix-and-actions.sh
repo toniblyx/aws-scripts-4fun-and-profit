@@ -4,6 +4,11 @@
 
 SERVICES_LIST_URL="https://docs.aws.amazon.com/IAM/latest/UserGuide"
 SERVICES_LIST_PAGE="reference_policies_actions-resources-contextkeys.html"
+
+# this resource is probably better and more accurate:
+# https://awspolicygen.s3.amazonaws.com/js/policies.js
+# would need some parsing with jq though 
+
 LIST_OF_SERVICES_PAGES=$(curl -s $SERVICES_LIST_URL/$SERVICES_LIST_PAGE |grep "<li><a href=\"" |awk -F"\"" '{ print $2 }')
 LIST_OF_SERVICES=$(curl -s $SERVICES_LIST_URL/$SERVICES_LIST_PAGE |grep "<li><a href=\"" |awk -F"\"" '{ print $2 }'|awk -F"list_" '{ print $2 }'|awk -F".html" '{ print $1 }')
 
