@@ -1,0 +1,406 @@
+BastionLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        S3AccessCreds:
+          type: S3
+          roleName: !Ref BastionInstanceRole
+          buckets: !Ref RuntimeAssetsBucketName
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              awslogs: []
+          files:
+            '/etc/awslogs/awscli.conf':
+              content: !Sub |
+                [default]
+                region = ${AWS::Region}
+                [plugins]
+                cwlogs = cwlogs
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/awslogs/awslogs.conf':
+              content: !Sub |
+                [general]
+                state_file = /var/lib/awslogs/agent-state
+                [/var/log/bastion/bastion.log]
+                file = /var/log/bastion/bastion.log
+                datetime_format = %b %d %H:%M:%S
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/bastion/bastion.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/dmesg]
+                file = /var/log/dmesg
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/dmesg
+                log_group_name = ${EC2LogGroup}
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/messages
+                log_group_name = ${EC2LogGroup}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/secure
+                log_group_name = ${EC2LogGroup}
+                [/var/log/audit/audit.log]
+                datetime_format =
+                file = /var/log/audit/audit.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/audit/audit.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cron]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cron
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/cron
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-init.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/cfn-init.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-hup.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-hup.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/cfn-hup.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-init-cmd.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init-cmd.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/cfn-init-cmd.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cloud-init-output.log]
+                file = /var/log/cloud-init-output.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/cloud-init-output.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/amazon/ssm/amazon-ssm-agent.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/amazon/ssm/amazon-ssm-agent.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/amazon/ssm/amazon-ssm-agent.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/amazon/ssm/errors.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/amazon/ssm/errors.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/amazon/ssm/errors.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/maillog]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/maillog
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/maillog
+                log_group_name = ${EC2LogGroup}
+                [/var/log/yum.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/yum.log
+                log_stream_name = ${AWS::StackName}/bastion-{instance_id}/var/log/yum.log
+                log_group_name = ${EC2LogGroup}
+              mode: '000644'
+              owner: root
+              group: root
+            '/tmp/hardening_bootstrap.sh':
+              source: !Sub "https://${RuntimeAssetsBucketName}.s3.amazonaws.com/scripts/hardening_bootstrap.sh"
+              mode: "000550"
+              owner: root
+              group: root
+              authentication: S3AccessCreds
+            '/tmp/eks_bootstrap.sh':
+              content: !Sub |
+                #!/bin/bash
+                echo "Checking whether cluster exists..."
+                aws eks describe-cluster --region ${AWS::Region} --name ${AWS::StackName}-cluster &> /dev/null
+                if [ $? -ne 0 ]; then
+                  echo Cluster does not exist, creating...
+                  aws eks create-cluster --region ${AWS::Region} \
+                  --name ${AWS::StackName}-cluster \
+                  --role-arn ${EKSServiceRole.Arn} \
+                  --resources-vpc-config subnetIds=${VPCStack.Outputs.PrivateSubnet1AID},${VPCStack.Outputs.PrivateSubnet2AID},${VPCStack.Outputs.PublicSubnet1ID},${VPCStack.Outputs.PublicSubnet2ID},securityGroupIds=${ControlPlaneSecurityGroup}
+                  if [ $? -ne 0 ]; then
+                    exit 1
+                  fi
+                  sleep 5
+                  STATUS=$(aws eks describe-cluster --region ${AWS::Region} --name ${AWS::StackName}-cluster --query cluster.status --output text)
+                  while [ \"$STATUS\" = \"CREATING\" ]; do
+                    echo Cluster is still creating, sleeping for 30 seconds...
+                    sleep 30
+                    STATUS=$(aws eks describe-cluster --region ${AWS::Region} --name ${AWS::StackName}-cluster --query cluster.status --output text)
+                  done
+                fi
+                echo Updating kubeconfig file...
+                ENDPOINT=$(aws eks describe-cluster --region ${AWS::Region}  --name ${AWS::StackName}-cluster --query cluster.endpoint --output text)
+                CERT_DATA=$(aws eks describe-cluster --region ${AWS::Region}  --name ${AWS::StackName}-cluster --query cluster.certificateAuthority.data --output text)
+                sed -i s,ENDPOINT,$ENDPOINT,g /home/ec2-user/.kube/config
+                sed -i s,CERTIFICATE_DATA,$CERT_DATA,g /home/ec2-user/.kube/config
+                export KUBECONFIG=/home/ec2-user/.kube/config
+                echo Checking whether aws-auth configmap exists...
+                kubectl get configmaps/aws-auth -n kube-system &> /dev/null
+                if [ $? -gt 0 ]; then
+                  echo Configmap does not exist, applying...
+                  kubectl apply -f /tmp/aws-auth-cm.yaml
+                fi
+                echo Checking whether tiller serviceaccount exists...
+                kubectl get serviceaccount/tiller -n kube-system &> /dev/null
+                if [ $? -gt 0 ]; then
+                  echo tiller serviceaccount does not exist, applying...
+                  kubectl apply -f /tmp/helm-rbac-config.yaml
+                fi
+              mode: "000750"
+              owner: root
+              group: root
+            '/tmp/aws-auth-cm.yaml':
+              content: !Sub |
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: aws-auth
+                  namespace: kube-system
+                data:
+                  mapRoles: |
+                    - rolearn: ${NodeInstanceRole.Arn}
+                      username: system:node:{{EC2PrivateDNSName}}
+                      groups:
+                        - system:bootstrappers
+                        - system:nodes
+              mode: "000644"
+              owner: root
+              group: root
+            '/tmp/helm-rbac-config.yaml':
+              content: !Sub |
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: tiller
+                  namespace: kube-system
+                ---
+                apiVersion: rbac.authorization.k8s.io/v1beta1
+                kind: ClusterRoleBinding
+                metadata:
+                  name: tiller
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: ClusterRole
+                  name: cluster-admin
+                subjects:
+                  - kind: ServiceAccount
+                    name: tiller
+                    namespace: kube-system
+              mode: "000644"
+              owner: root
+              group: root
+            '/home/ec2-user/.kube/config':
+              content: !Sub |
+                apiVersion: v1
+                clusters:
+                - cluster:
+                    server: ENDPOINT
+                    certificate-authority-data: CERTIFICATE_DATA
+                  name: kubernetes
+                contexts:
+                - context:
+                    cluster: kubernetes
+                    user: aws
+                  name: aws
+                current-context: aws
+                kind: Config
+                preferences: {}
+                users:
+                - name: aws
+                  user:
+                    exec:
+                      apiVersion: client.authentication.k8s.io/v1alpha1
+                      command: aws-iam-authenticator
+                      args:
+                        - token
+                        - -i
+                        - ${AWS::StackName}-cluster
+              mode: "000666"
+              owner: ec2-user
+              group: ec2-user
+          services:
+            sysvinit:
+              awslogs:
+                enabled: "true"
+                ensureRunning: "true"
+                packages:
+                  yum:
+                  - awslogs
+                files:
+                - "/etc/awslogs/awslogs.conf"
+                - "/etc/awslogs/awscli.conf"
+              sendmail:
+                enabled: "false"
+                ensureRunning: "false"
+          commands:
+            01-eks-bootstrap:
+              command: "./tmp/eks_bootstrap.sh"
+            02-hardening-bootstrap:
+              command: "./tmp/hardening_bootstrap.sh --tcp-forwarding false --x11-forwarding false"
+    Properties:
+      AssociatePublicIpAddress: true
+      PlacementTenancy: default
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref BastionInstanceProfile
+      ImageId: !FindInMap [BastionAmiRegionMap, !Ref "AWS::Region", AmiId]
+      SecurityGroups:
+        - !Ref BastionSecurityGroup
+      InstanceType: t2.micro
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+            set -x
+            export PATH=$PATH:/usr/local/bin
+            pip install awscli --upgrade
+            easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+            cfn-init -v --stack ${AWS::StackName} --resource BastionLaunchConfiguration --region ${AWS::Region}
+            cfn-signal -e $? --stack ${AWS::StackName} --resource BastionAutoScalingGroup --region ${AWS::Region}
+
+NodeLaunchConfig:
+    DependsOn: BastionAutoScalingGroup
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        S3AccessCreds:
+          type: S3
+          roleName: !Ref NodeInstanceRole
+          buckets: !Ref RuntimeAssetsBucketName
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              awslogs: []
+              amazon-ssm-agent: []
+              amazon-efs-utils: []
+          files:
+            '/etc/awslogs/awscli.conf':
+              content: !Sub |
+                [default]
+                region = ${AWS::Region}
+                [plugins]
+                cwlogs = cwlogs
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/awslogs/awslogs.conf':
+              content: !Sub |
+                [general]
+                state_file = /var/lib/awslogs/agent-state
+                [/var/log/bastion/bastion.log]
+                file = /var/log/bastion/bastion.log
+                datetime_format = %b %d %H:%M:%S
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/bastion/bastion.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/dmesg]
+                file = /var/log/dmesg
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/dmesg
+                log_group_name = ${EC2LogGroup}
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/messages
+                log_group_name = ${EC2LogGroup}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/secure
+                log_group_name = ${EC2LogGroup}
+                [/var/log/audit/audit.log]
+                datetime_format =
+                file = /var/log/audit/audit.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/audit/audit.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cron]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cron
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/cron
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-init.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/cfn-init.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-hup.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-hup.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/cfn-hup.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-init-cmd.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init-cmd.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/cfn-init-cmd.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cloud-init-output.log]
+                file = /var/log/cloud-init-output.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/cloud-init-output.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/amazon/ssm/amazon-ssm-agent.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/amazon/ssm/amazon-ssm-agent.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/amazon/ssm/amazon-ssm-agent.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/amazon/ssm/errors.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/amazon/ssm/errors.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/amazon/ssm/errors.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/maillog]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/maillog
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/maillog
+                log_group_name = ${EC2LogGroup}
+                [/var/log/yum.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/yum.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/yum.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/kube-proxy.log]
+                datetime_format =
+                file = /var/log/kube-proxy.log
+                log_stream_name = ${AWS::StackName}/workernode-{instance_id}/var/log/kube-proxy.log
+                log_group_name = ${EC2LogGroup}
+              mode: '000644'
+              owner: root
+              group: root
+            '/tmp/hardening_bootstrap.sh':
+              source: !Sub "https://${RuntimeAssetsBucketName}.s3.amazonaws.com/scripts/hardening_bootstrap.sh"
+              mode: "000550"
+              owner: root
+              group: root
+              authentication: S3AccessCreds
+          services:
+            sysvinit:
+              awslogsd:
+                enabled: "true"
+                ensureRunning: "true"
+                packages:
+                  yum:
+                  - awslogs
+                files:
+                - '/etc/awslogs/awslogs.conf'
+                - '/etc/awslogs/awscli.conf'
+              amazon-ssm-agent:
+                enabled: "true"
+                ensureRunning: "true"
+                packages:
+                  yum:
+                  - amazon-ssm-agent
+              postfix:
+                enabled: "false"
+                ensureRunning: "false"
+          commands:
+              hardening-bootstrap:
+                command: "./tmp/hardening_bootstrap.sh --tcp-forwarding false --x11-forwarding false"
+    Properties:
+      AssociatePublicIpAddress: false
+      IamInstanceProfile: !Ref NodeInstanceProfile
+      ImageId: !FindInMap [NodeAmiRegionMap, !Ref "AWS::Region", AmiId]
+      InstanceType: m5.xlarge
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - !Ref NodeSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          set -x
+          export PATH=$PATH:/usr/local/bin
+          pip install awscli --upgrade
+          easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource NodeLaunchConfig --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource NodeAutoScalingGroup --region ${AWS::Region}
